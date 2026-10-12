@@ -1,0 +1,30 @@
+services:
+  db:
+    image: mongo:8
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: household
+      MONGO_INITDB_ROOT_PASSWORD: household
+      MONGO_INITDB_DATABASE: household_account_book
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    environment:
+      MONGODB_URL: mongodb://household:household@db:27017/household_account_book?authSource=admin
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  mongo-data:
