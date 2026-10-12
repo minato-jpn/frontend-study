@@ -1,30 +1,42 @@
 # TanStack ファミリーで作る大量データの一覧画面
 
-TanStack DB・TanStack Table・TanStack Virtual を組み合わせて、2 万件のデータを一覧表示するサンプルを作りました。
-
-この発表で話すこと
-
-1. 3 つのライブラリが何をしてくれるのか
-2. 今回の構成（どこで何を処理しているか）
-3. 2 万件のデータで試した結果
-4. 実務で使うときの設計の考え方
+TanStack DB・TanStack Table・TanStack Virtual を組み合わせたらUIサクサク動くんじゃねって思ったのでやってみました。
 
 ---
 
-## 1. 使ったライブラリ
+## 1. ライブラリ
 
 ### TanStack DB
 
 API から取得したデータをフロントエンド側にコレクションとして保持し、コレクション同士の JOIN や楽観的な更新ができるライブラリです。内部では TanStack Query を使っています。
 
-弊社サービスは API 側に課題があり、リレーションが複雑になってクエリの実行に時間がかかっている印象があります。一覧データを一度取得してしまえば、そのあとはユーザー側でデータの保存とリレーションの組み立てができます。
+TanStack Query はデータをメモリに保持するのが基本でしたが、TanStack DB ではコレクションの種類を選ぶことで、保存先を選べるようになりました。
 
-- UI の面：楽観的な更新で、操作がすぐ画面に反映されるので、ユーザーのストレスを減らせる
-- ロジックの面：API を何度も呼ばずに済むので、データの受け取りが速くなる
+| コレクションの種類 | 保存先 |
+| --- | --- |
+| LocalOnly | メモリのみ（リロードすると消える） |
+| LocalStorage | ブラウザの localStorage |
+| IndexedDB | ブラウザの IndexedDB |
+
+データはコレクションという単位で分けて保存します。**ライブクエリ（LiveQueryCollection）** を使うと、複数のコレクションを SQL のように JOIN して、リレーションを組み立てた結果を作れます。フロントエンド側の JSON 同士をリレーションでつなげられる、ということです。ライブクエリの結果はメモリ上に持ち、元のコレクションが変わると自動で更新されます。
+
+詳しくは [〇〇さんの記事]() を参照してください。
+
+リレーションが複雑になると、バックエンドでのクエリの実行に時間がかかってしまうことがあります。TanStack DB を使えば、一覧データをある程度大まかに一度取得しておき、そのあとのデータの保持やリレーションの組み立てをフロントエンド側で行えます。
+
+> 利点
+>
+> - 楽観的な更新ができるので、操作がすぐ画面に反映され、ユーザーのストレスを減らせる
+> - 最初にまとめて取得しておけば、そのあとの操作ではデータの取得を待たずに済み、UX が向上する
 
 どうせフロントエンド側で結合するのであれば、バックエンドはリレーションを持たないキーバリューストア（NoSQL）のほうが相性がよいと考え、今回は MongoDB で実装しました。
 
-詳しくは [〇〇さんの記事]() を参照してください。
+運用するうえでは、データベースに何を選ぶのか、どこまでをフロントエンド側で管理するのかがテーマになりそうだと感じました。
+一番適しているのは、複雑なリレーションがなく、大量のデータを扱う場合だと思います。たとえば、チャットの履歴や X のポストのように、NoSQL で保存されているような情報です。
+
+GraphQL と組み合わせることもできますが、GraphQL ではフロントエンドでそのまま使える形のデータが返ってくるので、ライブクエリで組み立てる必要はあまりなく、TanStack DB のメリットを活かしにくいです。
+
+ほかに、DB の更新をリアルタイムに同期するコレクション（Electric、PowerSync、RxDB、TrailBase など）もあります。
 
 ### TanStack Virtual
 
@@ -32,16 +44,72 @@ API から取得したデータをフロントエンド側にコレクション�
 
 1 万件のデータをそのまま描画すると重くなりますが、TanStack Virtual は**画面に見えている行だけ**を DOM にするので、スムーズにスクロールできます。Slack や LINE のトーク履歴はページ分けされていないのにさくさくスクロールできますが、これと同じように、いまどの位置までスクロールしているかを内部で監視して、描画する行を判断しています。
 
+#### Virtualizer の仕組み
+
+中心になるのは `useVirtualizer` が返す **Virtualizer** です。Virtualizer はデータそのものを持たず、「何件あるか」と「1 行の高さ」だけを知っています。スクロール位置を監視して、**いま見えている範囲に入る行の番号と位置**を計算します。
+
+1. 全行分の高さ（`getTotalSize()`）を持つ空の箱を作り、スクロールバーを本来の長さにする
+2. スクロールするたびに、スクロール位置と行の高さから「何行目から何行目が見えているか」を計算する
+3. その範囲の行（`getVirtualItems()`）だけを描画し、各行を本来の位置（`item.start`）に配置する
+
+```tsx
+const parentRef = useRef<HTMLDivElement>(null);
+const virtualizer = useVirtualizer({
+  count: items.length, // 全部で何行あるか
+  getScrollElement: () => parentRef.current, // スクロールを監視する要素
+  estimateSize: () => ROW_HEIGHT, // 1 行の高さの見積もり
+  overscan: 20, // 見えている範囲の前後に余分に描画する行数
+});
+
+return (
+  <div ref={parentRef} style={{ height: 400, overflow: "auto" }}>
+    {/* 全行分の高さを確保する */}
+    <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+      {/* 見えている範囲の行だけを描画する */}
+      {virtualizer.getVirtualItems().map((item) => (
+        <div
+          key={item.key}
+          data-index={item.index} // 何行目かを Virtualizer に伝える
+          ref={virtualizer.measureElement} // 実際の高さを測る
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            transform: `translateY(${item.start}px)`, // 本来の位置に置く
+          }}
+        >
+          {items[item.index].memo}
+        </div>
+      ))}
+    </div>
+  </div>
+);
+```
+
+| オプション・メソッド | 役割 |
+| --- | --- |
+| `count` | 全部で何行あるか。データ本体は渡さない |
+| `getScrollElement` | スクロール位置を監視する要素 |
+| `estimateSize` | 1 行の高さの見積もり。全体の高さと位置の計算に使う |
+| `overscan` | 見えている範囲の前後に余分に描画する行数。速くスクロールしても空白が見えにくくなる |
+| `getTotalSize()` | 全行分の高さ。スクロールバーの長さになる |
+| `getVirtualItems()` | いま描画すべき行の一覧。`index`（何行目か）、`start`（上からの位置）、`key` を持つ |
+| `measureElement` | 描画した行の実際の高さを測り、見積もりとずれていれば位置を計算し直す。`data-index` が必要 |
+
+Virtualizer は「何行目をどこに置くか」を計算するだけで、行の中身や見た目には関わりません。そのため、テーブルの行でもチャットのメッセージでも、同じ仕組みで使えます。
+
 > メリット
 >
 > - 大量のデータでも描画が重くならない
 > - API 側でページングをしなくてもよい
 
-想定される利用ケースとして、プラットフォーム型のサービスとは相性がよいと感じました。
+想定される利用ケース
 
 - 就活支援サービスで大量の企業を一覧にする
 - EC サイトで商品を大量に並べる
 - ログをダッシュボードに表示する
+- チャットや掲示板のような機能
 
 ページ分けをしないと「どこまで確認したか」が分かりにくくなりますが、そこは TanStack Table の絞り込みや並び替えで補えると考えています。
 
@@ -57,13 +125,100 @@ API から取得したデータをフロントエンド側にコレクション�
 - ページ分け
 - 並び替えや絞り込みをサーバー側の API に任せることも可能
 
-> **v9 を使っています。** ネット上の記事の多くは v8（`useReactTable` / `getCoreRowModel`）です。v9 は `useTable` + `tableFeatures` で、使う機能だけを宣言する書き方に変わっています。
+テーブルは **Feature** と **Column** の 2 つで組み立てます。`useTable` に、この 2 つと表示するデータを渡します。
 
-個人的には、並び替えや絞り込みを API に任せると、バックエンドである程度データを組み立ててからフロントに渡すことになるので、TanStack DB との組み合わせ方はまだ整理しきれていないと感じました。今後 TanStack DB 側にクエリを投げられるようになると、フロントエンド側でほとんどを解決できるようになると思います。
+```ts
+const table = useTable({
+  features: features, // どの機能を使うか（テーブル全体）
+  columns: columns, // 列ごとの定義
+  data: transactions, // API などで取得したデータ（今回は TanStack DB のライブクエリの結果）
+});
+```
+
+- **Feature**：テーブル全体で「この機能とこの関数を使えるようにする」と宣言する
+- **Column**：列ごとに「この列ではどの関数を使うか、使わないか」を選ぶ
+
+よいところは、データを絞り込んだり並べ替えたりする処理を自分で書かなくても、宣言するだけで使えることです。
+
+#### Feature：テーブル全体で使う機能を宣言する
+
+v8 までは、並び替えや絞り込みなどの機能が最初から全部入っていました。v9 では、`tableFeatures()` で**使う機能だけを宣言する**形に変わりました。宣言しなかった機能はバンドルに含まれず、型にも出てきません。たとえば並び替えを宣言しないと、`column.toggleSorting()` を書いた時点で型エラーになります。
+
+```ts
+const features = tableFeatures({
+  // 機能本体
+  columnFilteringFeature,
+  rowSortingFeature,
+  rowPaginationFeature,
+  rowAggregationFeature,
+  // 行モデル（実際に行を絞る・並べる・ページに切る処理）
+  filteredRowModel: createFilteredRowModel(),
+  sortedRowModel: createSortedRowModel(),
+  paginatedRowModel: createPaginatedRowModel(),
+  // Column から名前で呼べる関数の登録
+  filterFns: {
+    includesString: filterFn_includesString,
+    equalsString: filterFn_equalsString,
+    greaterThan: filterFn_greaterThan,
+  },
+  sortFns: {
+    alphanumeric: sortFn_alphanumeric,
+    text: sortFn_text,
+    datetime: sortFn_datetime,
+    basic: sortFn_basic,
+  },
+  aggregationFns: { sum: aggregationFn_sum },
+});
+```
+
+| 種類 | 中身 | 役割 |
+| --- | --- | --- |
+| 機能本体 | `columnFilteringFeature` など | 絞り込み・並び替え・ページ分け・集計を使えるようにする |
+| 行モデル | `filteredRowModel` など | 実際に行を絞る・並べる・ページに切る |
+| 関数の登録 | `filterFns` / `sortFns` / `aggregationFns` | Column から名前で選べる比較・集計の関数 |
+
+#### Column：列ごとに表示と使う機能を決める
+
+`createColumnHelper` で Feature と行の型をひも付け、列ごとに表示する値と使う機能を指定します。
+
+```tsx
+const columnHelper = createColumnHelper<typeof features, TransactionRow>();
+
+const TransactionColumns = columnHelper.columns([
+  columnHelper.accessor((row) => row.categoryName ?? "未分類", {
+    id: "category",
+    header: "カテゴリ",
+    sortFn: "text", // Feature の sortFns に登録した名前
+    enableColumnFilter: true,
+    filterFn: "includesString", // Feature の filterFns に登録した名前
+  }),
+  columnHelper.accessor("amount", {
+    header: "金額",
+    sortFn: "alphanumeric",
+    filterFn: "greaterThan",
+    aggregationFn: "sum",
+    footer: ({ column, table }) =>
+      `合計 ¥ ${column
+        .getAggregationValue<number>({ rows: table.getRowModel().rows })
+        .toLocaleString()}`,
+  }),
+]);
+```
+
+| 項目 | 例（カテゴリ列） | 意味 |
+| --- | --- | --- |
+| 値の取り出し方 | `(row) => row.categoryName ?? "未分類"` | 行データからこの列の値を作る |
+| `header` / `footer` / `cell` | `header: "カテゴリ"` | 見出し・合計行・セルの表示 |
+| `sortFn` / `filterFn` | `"text"` / `"includesString"` | Feature に登録した関数から選ぶ |
+| `enableColumnFilter` など | `true` | この列でその機能を使うかどうか |
+
+Column で指定できる関数は、Feature に登録したものだけです。金額列の `filterFn: "greaterThan"` は、Feature の `filterFns` に `greaterThan` を登録してあるから指定できます。登録していない名前を書くと型エラーになります。
+
+並び替えや絞り込みといった情報を複雑なロジックなしに実行することができ、かつユーザー自身がデータの形状を変えることができるライブラリです。
 
 ---
 
-## 2. 今回の構成
+## 2. 実装
 
 ### 技術スタック
 
@@ -81,16 +236,16 @@ API から取得したデータをフロントエンド側にコレクション�
 ### データの流れ
 
 ```
-MongoDB（items / categories）
+MongoDB（transactions / categories）
    │  そのまま保存。JOIN はしない
    ▼
-FastAPI（GET /items, GET /categories ...）
+FastAPI（GET /transactions, GET /categories ...）
    │  条件を付けずに全件返す
    ▼
 TanStack DB
-   ├ itemCollection（一覧データ 2 万件）
+   ├ transactionCollection（一覧データ 2 万件）
    ├ categoryCollection（カテゴリ）
-   └ itemRowsCollection（ライブクエリで JOIN してカテゴリ名を付ける）
+   └ transactionHistoryCollection（ライブクエリで JOIN してカテゴリ名を付ける）
    │
    ├──▶ TanStack Table … 並び替え・絞り込み・集計・ページ分け
    ├──▶ TanStack Virtual … 仮想スクロールで全件表示
@@ -106,18 +261,21 @@ MongoDB には一覧データとカテゴリをひたすら保存し、API で�
 ライブクエリで一覧データとカテゴリを JOIN する部分です。
 
 ```ts
-export const itemRowsCollection = createLiveQueryCollection({
-  id: "item-rows",
+export const transactionHistoryCollection = createLiveQueryCollection({
+  id: "transaction-rows",
   query: (q) =>
     q
-      .from({ i: itemCollection })
-      .leftJoin({ c: categoryCollection }, ({ i, c }) => eq(i.categoryId, c.id))
-      .select(({ i, c }) => ({
-        id: i.id,
-        date: i.date,
-        amount: i.amount,
-        categoryId: i.categoryId,
+      .from({ t: transactionCollection })
+      .leftJoin({ c: categoryCollection }, ({ t, c }) => eq(t.categoryId, c.id))
+      .select(({ t, c }) => ({
+        id: t.id,
+        date: t.date,
+        amount: t.amount,
+        categoryId: t.categoryId,
         categoryName: c?.name,
+        kind: t.kind,
+        place: t.place,
+        memo: t.memo,
       })),
   getKey: (row) => row.id,
 });
@@ -151,25 +309,34 @@ export const itemRowsCollection = createLiveQueryCollection({
 
 ![仮想化なし](movie/NoneVirtual.gif)
 
-### API の負荷
-
-FastAPI を 1 プロセスで動かし、[oha](https://github.com/hatoo/oha) で負荷をかけました（負荷をかける側とサーバーは同じマシンなので、数字は目安です）。
-
-| 処理 | 1 件あたり | 1 秒あたりの上限 |
-| --- | --- | --- |
-| 1 か月分の一覧（約 70 件） | 約 3ms | 約 350 件 |
-| 1 件の登録 | 約 4ms | 約 550 件 |
-| **全件取得（2 万件・3.4MB）** | **約 600ms** | **約 1.7 件** |
-
-- 期間を指定する API は、データを 20 万件に増やしても速度がほとんど変わらなかった（日付のインデックスが効いている）
-- 全件取得は、20 万件だと約 3.8 秒・35MB になった
-- サーバーを 4 プロセスにすると、1 秒あたりの件数は約 3 倍になった
-
-**TanStack Virtual が軽くしてくれるのは描画だけです。** 通信量やメモリ、API の負荷は減りません。今回のように全件を取る構成は、件数が増えるとここが先に限界になります。
-
 ---
 
-## 4. 実務で使うときの設計の考え方
+## 4. まとめ
+
+- TanStack DB で「取得したデータの組み立て」をフロントに寄せると、API の呼び出しを減らして UI を柔軟に変えられる
+- TanStack Table と TanStack Virtual で、大量のデータでも操作しやすく、軽く表示できる
+- ただし全件を取得する構成には限界があるので、範囲の絞り込みはバックエンドで行うのが現実的
+
+
+### コメント
+TanstackのFamilyはまだまだいますが、どれも一つ一つ機能を組み立てていく実感があるライブラリで勉強していて楽しかったと感じています。本当は最近リリースされたTanstack Chartを主軸に扱おうと思っていたのですが、組み合わせが難しかったです。特に親和性が良さそうなモノで絞って紹介してみました。
+
+<!-- 
+
+## アーキテクチャについて（未完成）
+そもそもの思想としてフロントエンドのためにバックエンドのアーキテクチャを変えてしまうのはいかがなものなのかと若輩者ながらに感じておりますが、３つのライブラリを使う場合には視野に入れる必要があるかもしれないです。
+
+### 今後検討したいこと
+
+- 一覧 API に期間指定やページングを付けて、取得量を抑える
+- レンダリング方式：CSR（SPA）か SSR か
+- API の方式：REST / GraphQL / RPC
+- DB：RDB か NoSQL か
+- データの保存場所：メモリ、localStorage（5MB まで）、sessionStorage、IndexedDB、Cookie、Cache API、OPFS、URL のクエリパラメータ
+- TanStack DB のコレクションの種類
+  - LocalOnly / LocalStorage / IndexedDB
+  - リアルタイム同期系：Electric、PowerSync、RxDB、TrailBase
+
 
 ### 基本方針
 
@@ -202,9 +369,9 @@ FastAPI を 1 プロセスで動かし、[oha](https://github.com/hatoo/oha) で
 
 ### 守るべき原則
 
-- **ブラウザに渡したデータは、ユーザーに見える前提で扱う。** 「全部返してフロントで絞る」は認可の代わりにならない
-- **クライアントからの書き込みは信用しない。** 検証は必ずバックエンドで行う
-- **バックエンドに任せる条件は数パターンに絞る。** ユーザーの操作をすべてバックエンドに流さない
+- **ブラウザに渡したデータは、ユーザーに見える前提で扱う。** 
+- **クライアントからの書き込みは信用しない。** 
+- **バックエンドに任せる条件は数パターンに絞る。** 
 
 ### NoSQL 側の設計
 
@@ -225,20 +392,4 @@ FastAPI を 1 プロセスで動かし、[oha](https://github.com/hatoo/oha) で
 この構成はバックエンドを含めたアーキテクチャ全体に影響するので、一度選ぶと後から戻すのが難しい点に注意が必要です。
 
 ---
-
-## 5. まとめと今後
-
-- TanStack DB で「取得したデータの組み立て」をフロントに寄せると、API の呼び出しを減らして UI を柔軟に変えられる
-- TanStack Table と TanStack Virtual で、大量のデータでも操作しやすく、軽く表示できる
-- ただし全件を取得する構成には限界があるので、範囲の絞り込みはバックエンドで行うのが現実的
-
-### 今後検討したいこと
-
-- 一覧 API に期間指定やページングを付けて、取得量を抑える
-- レンダリング方式：CSR（SPA）か SSR か
-- API の方式：REST / GraphQL / RPC
-- DB：RDB か NoSQL か
-- データの保存場所：メモリ、localStorage（5MB まで）、sessionStorage、IndexedDB、Cookie、Cache API、OPFS、URL のクエリパラメータ
-- TanStack DB のコレクションの種類
-  - LocalOnly / LocalStorage / IndexedDB
-  - リアルタイム同期系：Electric、PowerSync、RxDB、TrailBase
+ -->
