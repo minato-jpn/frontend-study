@@ -41,9 +41,9 @@ function App() {
         onChange={(e) => amountColumn?.setFilterValue(e.target.value || undefined)}
       />{" "}
       <Table table={table} />
-      <h2>仮想化あり</h2>
+      <h2 style={{margin:32}}>仮想化あり</h2>
       <VirtualTable items={transactions} />
-      <h2>仮想化なし（全 {transactions.length.toLocaleString()} 件を一度に描画）</h2>
+      <h2 style={{margin:32}}>仮想化なし（全 {transactions.length.toLocaleString()} 件を一度に描画）</h2>
       <button onClick={() => setShowPlainTable((show) => !show)}>
         {showPlainTable ? "隠す" : "表示する"}
       </button>

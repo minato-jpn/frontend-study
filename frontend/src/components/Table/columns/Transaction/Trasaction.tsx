@@ -1,9 +1,7 @@
 import { createColumnHelper } from "@tanstack/react-table";
 import features from "../../feature/feature";
-import type { Transaction } from "../../../../dummy/money/const";
-import { categories } from "../../../../dummy/money/const";
-const columnHelper = createColumnHelper<typeof features, Transaction>();
-const categoryIDMap = new Map(categories.map((category) => [category.id, category.name]));
+import type { TransactionRow } from "../../VirturalTable";
+const columnHelper = createColumnHelper<typeof features, TransactionRow>();
 const TransactionColumns = columnHelper.columns([
   columnHelper.accessor("date", {
     header: "日付",
@@ -11,7 +9,7 @@ const TransactionColumns = columnHelper.columns([
     enableColumnFilter: false,
     cell: (info) => new Date(info.getValue()).toLocaleDateString("ja-JP"),
   }),
-  columnHelper.accessor((row) => categoryIDMap.get(row.categoryId) ?? "未分類", {
+  columnHelper.accessor((row) => row.categoryName ?? "未分類", {
     id: "category",
     header: "カテゴリ",
     sortFn: "text",

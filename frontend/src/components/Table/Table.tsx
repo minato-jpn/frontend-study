@@ -1,7 +1,7 @@
 import type { ReactTable } from "@tanstack/react-table";
-import type { Transaction } from "../../dummy/money/const";
+import type { TransactionRow } from "./VirturalTable";
 import features from "./feature/feature";
-export const Table = ({ table }: { table: ReactTable<typeof features, Transaction> }) => {
+export const Table = ({ table }: { table: ReactTable<typeof features, TransactionRow> }) => {
   return (
     <>
       <table>
@@ -51,7 +51,7 @@ export const Table = ({ table }: { table: ReactTable<typeof features, Transactio
 
 const PAGE_SIZES = [10, 20, 50, 100];
 
-const Pagination = ({ table }: { table: ReactTable<typeof features, Transaction> }) => {
+const Pagination = ({ table }: { table: ReactTable<typeof features, TransactionRow> }) => {
   const { pageIndex, pageSize } = table.state.pagination;
   const pageCount = table.getPageCount();
   return (

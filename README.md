@@ -6,9 +6,8 @@ TanStack DB・TanStack Table・TanStack Virtual を組み合わせて、2 万件
 
 1. 3 つのライブラリが何をしてくれるのか
 2. 今回の構成（どこで何を処理しているか）
-3. 実装でつまずいたところ
-4. 2 万件のデータで試した結果
-5. 実務で使うときの設計の考え方
+3. 2 万件のデータで試した結果
+4. 実務で使うときの設計の考え方
 
 ---
 
@@ -126,55 +125,7 @@ export const itemRowsCollection = createLiveQueryCollection({
 
 ---
 
-## 3. 実装でつまずいたところ
-
-### TanStack DB
-
-| 症状 | 原因 | 対応 |
-| --- | --- | --- |
-| 自分で定義した型が合わないというエラー | `@tanstack/react-db` は `Transaction` という名前の型を提供している。同じ名前の型を自分で定義していて、間違って TanStack DB 側を import していた | import 元を自分の型に直す。`Transaction` という型名は避けたほうが安全 |
-| `onUpdate` などで「No overload matches this call」 | ハンドラーには変更したデータではなく `{ transaction, collection }` が渡される | `transaction.mutations` から `original` / `modified` / `changes` を取り出す |
-| 書き方を直しても型エラーが消えない | `react-db@0.5.7` は `db@0.12.3`、`query-db-collection` は `db@0.13.0` を使っていて、`@tanstack/db` が 2 つ入っていた | `react-db` を 0.5.8 に上げてバージョンをそろえる（`npm ls @tanstack/db` で確認できる） |
-| `queryFn` の型エラー | `queryFn` は配列を返す必要がある | `Promise<Item[]>` のように配列を返すようにする |
-| 「Join requires an index on "id"」という警告 | JOIN の条件に使う項目にインデックスがない | `collection.createIndex((row) => row.id, { indexType: BasicIndex })` |
-| 一部の行に JOIN 先の値が付かない | API が有効なカテゴリしか返しておらず、無効にしたカテゴリと結合できなかった | JOIN 先のデータは、参照される可能性があるものをすべて取得する |
-
-`onUpdate` の書き方の例です。
-
-```ts
-onUpdate: async ({ transaction }) => {
-  await Promise.all(
-    transaction.mutations.map((mutation) => updateItem(mutation.original.id, mutation.changes)),
-  );
-},
-```
-
-### JOIN の種類
-
-`innerJoin` と `leftJoin` で結果が変わります。カテゴリが未設定の行も表示したい場合は `leftJoin` を使います。
-
-| JOIN | 行数 | カテゴリが未設定の行 |
-| --- | --- | --- |
-| `leftJoin` | 20,001 件（全件） | 263 件が残る（`categoryName` は `undefined`） |
-| `innerJoin` | 19,738 件 | 消える |
-
-### TanStack Table
-
-| 症状 | 原因 | 対応 |
-| --- | --- | --- |
-| 2 万件あるのに 10 件しか表示されない | `paginatedRowModel` を入れると `getRowModel()` は 1 ページ分だけを返す。初期値は `pageSize: 10` | ページ送りの UI を付ける（`nextPage()` / `setPageSize()` など） |
-| フッターの合計が少ない | 合計を `getRowModel()`（表示中のページ）で計算していた | 全件の合計なら `getFilteredRowModel()` を使う |
-
-### TanStack Virtual
-
-| 症状 | 原因 | 対応 |
-| --- | --- | --- |
-| 「Missing attribute name 'data-index'」という警告 | `measureElement` を付けた要素は、何行目かを `data-index` で伝える必要がある | `data-index={item.index}` を付ける |
-| 最初の数十行しかスクロールできない | 全行分の高さを確保していなかった。`containerRef` は `directDomUpdates: true` のときしか効かない | 内側に `height: getTotalSize()` を指定し、各行を `position: absolute` + `translateY(item.start)` で配置する |
-
----
-
-## 4. 2 万件のデータで試した結果
+## 3. 2 万件のデータで試した結果
 
 ### テーブルを 3 種類並べて比較
 
@@ -183,6 +134,22 @@ onUpdate: async ({ transaction }) => {
 | TanStack Table（ページ分け） | 1 ページ分（10〜100 行） | 並び替え・絞り込み・集計ができる |
 | TanStack Virtual | 画面に見えている行 + 前後 20 行 | 全件をスクロールで見られる |
 | 仮想化なし | 20,001 行すべて | 比較用。表示するとかなり重い |
+
+### 映像で比較
+
+同じ 2 万件のデータを、3 種類のテーブルで表示したときの様子です。
+
+#### TanStack Table（ページ分け）
+
+![TanStack Table（ページ分け）](movie/TanstackTable.gif)
+
+#### TanStack Virtual
+
+![TanStack Virtual](movie/TanstackVirtual.gif)
+
+#### 仮想化なし
+
+![仮想化なし](movie/NoneVirtual.gif)
 
 ### API の負荷
 
@@ -202,7 +169,7 @@ FastAPI を 1 プロセスで動かし、[oha](https://github.com/hatoo/oha) で
 
 ---
 
-## 5. 実務で使うときの設計の考え方
+## 4. 実務で使うときの設計の考え方
 
 ### 基本方針
 
@@ -225,11 +192,9 @@ FastAPI を 1 プロセスで動かし、[oha](https://github.com/hatoo/oha) で
 
 | 処理 | 担当 |
 | --- | --- |
-| 認可（見てよいデータだけ返す） | バックエンド |
 | 範囲の絞り込み・決まったパターンの並び替え | バックエンド |
 | 書き込みの検証・データの整合性 | バックエンド |
 | 全期間の集計などの大きな処理 | バックエンド |
-| 全文検索 | 検索エンジン |
 | 表示用の行の組み立て（JOIN） | TanStack DB |
 | 楽観的な更新 | TanStack DB |
 | 取得した範囲内での並び替え・絞り込み・グループ化 | TanStack Table |
@@ -261,7 +226,7 @@ FastAPI を 1 プロセスで動かし、[oha](https://github.com/hatoo/oha) で
 
 ---
 
-## 6. まとめと今後
+## 5. まとめと今後
 
 - TanStack DB で「取得したデータの組み立て」をフロントに寄せると、API の呼び出しを減らして UI を柔軟に変えられる
 - TanStack Table と TanStack Virtual で、大量のデータでも操作しやすく、軽く表示できる
