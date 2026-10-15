@@ -114,3 +114,22 @@ class SummaryReport(CamelModel):
     payment: int
     balance: int  # income - payment
     by_category: list[CategoryTotal]
+
+
+# ---- products ----
+
+
+class Product(CamelModel):
+    id: str
+    name: str
+    category: str
+    price: int
+    original_price: int | None  # セール前の価格。null はセール対象外
+    rating: float  # 0〜5
+    review_count: int
+    # 画像は含めない。GET /products/{id}/image で別途取得する
+
+
+class ProductPage(CamelModel):
+    items: list[Product]
+    next_cursor: str | None  # 次のページを取るときに after に渡す。null は最後のページ

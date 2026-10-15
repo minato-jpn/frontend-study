@@ -7,6 +7,7 @@ import { categories } from "./dummy/money/const";
 import { VirtualTable } from "./components/Table/VirturalTable";
 import { PlainTable } from "./components/Table/PlainTable";
 import { useTransactionList } from "./hooks/transaction/useTransactionList";
+import { ProductList } from "./components/Product/ProductList";
 function App() {
   // The scrollable element for your list
   const { transactions: transactions, isLoading } = useTransactionList();
@@ -48,6 +49,8 @@ function App() {
         {showPlainTable ? "隠す" : "表示する"}
       </button>
       {showPlainTable && <PlainTable items={transactions} />}
+      <h2 style={{margin:32}}>おすすめ商品</h2>
+      <ProductList />
     </div>
   );
 }
